@@ -1,0 +1,64 @@
+---
+# This playbook intentionally does NOT configure production Vault.
+# It installs Vault and starts a localhost-only dev server for learning. Data is volatile.
+- name: Install HashiCorp Vault for localhost-only learning
+  hosts: vault_hosts
+  become: true
+  gather_facts: true
+  tasks:
+    - name: Install prerequisites
+      ansible.builtin.apt:
+        name:
+          - gpg
+          - wget
+          - lsb-release
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+    - name: Add HashiCorp repository key
+      ansible.builtin.shell: |
+        set -o pipefail
+        wget -O- https://apt.releases.hashicorp.com/gpg | gpg --dearmor -o /usr/share/keyrings/hashicorp-archive-keyring.gpg
+      args:
+        executable: /bin/bash
+        creates: /usr/share/keyrings/hashicorp-archive-keyring.gpg
+    - name: Add HashiCorp apt repository
+      ansible.builtin.apt_repository:
+        repo: "deb [signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com {{ ansible_distribution_release }} main"
+        filename: hashicorp
+        state: present
+        update_cache: true
+    - name: Install Vault
+      ansible.builtin.apt:
+        name: vault
+        state: present
+        update_cache: true
+    - name: Create Vault lab systemd override directory
+      ansible.builtin.file:
+        path: /etc/systemd/system/vault.service.d
+        state: directory
+        mode: "0755"
+    - name: Configure service for localhost-only dev mode (lab only)
+      ansible.builtin.copy:
+        dest: /etc/systemd/system/vault.service.d/lab.conf
+        mode: "0644"
+        content: |
+          [Service]
+          ExecStart=
+          ExecStart=/usr/bin/vault server -dev -dev-listen-address=127.0.0.1:8200
+          Environment=VAULT_ADDR=http://127.0.0.1:8200
+          Environment=HOME=/home/vault
+          ProtectHome=no
+      notify: Restart Vault
+    - name: Reload systemd and enable Vault
+      ansible.builtin.systemd:
+        daemon_reload: true
+        name: vault
+        state: restarted
+        enabled: true
+  handlers:
+    - name: Restart Vault
+      ansible.builtin.systemd:
+        daemon_reload: true
+        name: vault
+        state: restarted

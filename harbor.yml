@@ -1,0 +1,93 @@
+---
+# Learning baseline only. Harbor's HTTP mode is insecure; keep isolated from untrusted networks.
+# Production requires HTTPS, a trusted certificate, strong credentials, backups, and review of vendor docs.
+- name: Install Harbor container registry (HTTP-only isolated lab)
+  hosts: harbor_hosts
+  become: true
+  gather_facts: true
+  vars:
+    harbor_archive: "/tmp/harbor-online-installer-v{{ harbor_version }}.tgz"
+    harbor_url: "https://github.com/goharbor/harbor/releases/download/v{{ harbor_version }}/harbor-online-installer-v{{ harbor_version }}.tgz"
+  tasks:
+    - name: Install Harbor prerequisites
+      ansible.builtin.apt:
+        name:
+          - ca-certificates
+          - curl
+          - python3
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+    - name: Enable Docker
+      ansible.builtin.systemd:
+        name: docker
+        state: started
+        enabled: true
+    - name: Create Harbor directories
+      ansible.builtin.file:
+        path: "{{ item }}"
+        state: directory
+        mode: "0755"
+      loop:
+        - "{{ harbor_install_dir }}"
+        - "{{ harbor_data_dir }}"
+    - name: Download Harbor online installer archive
+      ansible.builtin.get_url:
+        url: "{{ harbor_url }}"
+        dest: "{{ harbor_archive }}"
+        mode: "0644"
+        timeout: 120
+    - name: Extract Harbor installer
+      ansible.builtin.unarchive:
+        src: "{{ harbor_archive }}"
+        dest: "{{ harbor_install_dir }}"
+        remote_src: true
+        creates: "{{ harbor_install_dir }}/harbor"
+    - name: Copy Harbor sample configuration
+      ansible.builtin.copy:
+        src: "{{ harbor_install_dir }}/harbor/harbor.yml.tmpl"
+        dest: "{{ harbor_install_dir }}/harbor/harbor.yml"
+        remote_src: true
+        mode: "0600"
+    - name: Configure Harbor for isolated HTTP lab
+      ansible.builtin.replace:
+        path: "{{ harbor_install_dir }}/harbor/harbor.yml"
+        regexp: '^hostname:.*$'
+        replace: "hostname: {{ harbor_hostname }}"
+    - name: Assign Harbor to a lab-safe HTTP port without clashing with nginx
+      ansible.builtin.replace:
+        path: "{{ harbor_install_dir }}/harbor/harbor.yml"
+        regexp: '^  port: 80$'
+        replace: '  port: 8081'
+    - name: Disable HTTPS in HTTP-only lab configuration
+      ansible.builtin.replace:
+        path: "{{ harbor_install_dir }}/harbor/harbor.yml"
+        regexp: '^https:'
+        replace: '# https:'
+    - name: Comment HTTPS config lines in template (lab-only)
+      ansible.builtin.replace:
+        path: "{{ harbor_install_dir }}/harbor/harbor.yml"
+        regexp: '^  (port|certificate|private_key):'
+        replace: '#  \\1:'
+    - name: Set Harbor data location
+      ansible.builtin.replace:
+        path: "{{ harbor_install_dir }}/harbor/harbor.yml"
+        regexp: '^data_volume:.*$'
+        replace: "data_volume: {{ harbor_data_dir }}"
+    - name: Run Harbor prepare script
+      ansible.builtin.command: ./prepare
+      args:
+        chdir: "{{ harbor_install_dir }}/harbor"
+      environment:
+        TERM: xterm
+      changed_when: true
+    - name: Install and start Harbor
+      ansible.builtin.command: ./install.sh
+      args:
+        chdir: "{{ harbor_install_dir }}/harbor"
+      environment:
+        TERM: xterm
+      changed_when: true
+    - name: Show Harbor lab endpoint
+      ansible.builtin.debug:
+        msg: "Harbor lab endpoint: http://{{ harbor_hostname }}:8081 (HTTP-only; isolated lab only). Default admin password is configured in harbor.yml; change it immediately."

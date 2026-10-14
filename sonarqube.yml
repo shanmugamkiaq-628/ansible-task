@@ -1,0 +1,79 @@
+---
+- name: Install SonarQube with PostgreSQL using Docker Compose
+  hosts: sonarqube_hosts
+  become: true
+  tasks:
+    - name: Install Docker Engine and Compose from Ubuntu packages
+      ansible.builtin.apt:
+        name:
+          - docker.io
+          - docker-compose-v2
+        state: present
+        update_cache: true
+        cache_valid_time: 3600
+    - name: Enable Docker
+      ansible.builtin.systemd:
+        name: docker
+        state: started
+        enabled: true
+    - name: Set vm.max_map_count for Elasticsearch
+      ansible.posix.sysctl:
+        name: vm.max_map_count
+        value: "524288"
+        state: present
+        sysctl_set: true
+        reload: true
+    - name: Create SonarQube project directory
+      ansible.builtin.file:
+        path: /opt/sonarqube
+        state: directory
+        mode: "0750"
+    - name: Deploy Compose file
+      ansible.builtin.copy:
+        dest: /opt/sonarqube/compose.yml
+        mode: "0600"
+        content: |
+          services:
+            db:
+              image: postgres:16
+              container_name: sonarqube-db
+              restart: unless-stopped
+              environment:
+                POSTGRES_USER: sonar
+                POSTGRES_PASSWORD: change-this-lab-password
+                POSTGRES_DB: sonar
+              volumes:
+                - postgres_data:/var/lib/postgresql/data
+              healthcheck:
+                test: ["CMD-SHELL", "pg_isready -U sonar -d sonar"]
+                interval: 10s
+                timeout: 5s
+                retries: 10
+            sonarqube:
+              image: sonarqube:lts-community
+              container_name: sonarqube
+              restart: unless-stopped
+              depends_on:
+                db:
+                  condition: service_healthy
+              ports:
+                - "9000:9000"
+              environment:
+                SONAR_JDBC_URL: jdbc:postgresql://db:5432/sonar
+                SONAR_JDBC_USERNAME: sonar
+                SONAR_JDBC_PASSWORD: change-this-lab-password
+              volumes:
+                - sonar_data:/opt/sonarqube/data
+                - sonar_extensions:/opt/sonarqube/extensions
+                - sonar_logs:/opt/sonarqube/logs
+          volumes:
+            postgres_data:
+            sonar_data:
+            sonar_extensions:
+            sonar_logs:
+    - name: Start SonarQube stack
+      ansible.builtin.command: docker compose -f /opt/sonarqube/compose.yml up -d
+      changed_when: true
+    - name: Show SonarQube URL
+      ansible.builtin.debug:
+        msg: "Open http://{{ ansible_host | default(inventory_hostname) }}:9000 on the trusted lab network. Change the sample DB password before any shared use."
