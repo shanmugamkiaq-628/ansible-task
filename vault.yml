@@ -1,0 +1,119 @@
+---
+- name: Install and Configure HashiCorp Vault on AWS EC2
+  hosts: vault_hosts
+  become: true
+
+  vars:
+    vault_port: 8200
+    vault_config_dir: /etc/vault.d
+    vault_data_dir: /opt/vault/data
+
+  tasks:
+
+    - name: Update apt package cache
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+
+    - name: Install required packages
+      ansible.builtin.apt:
+        name:
+          - wget
+          - gpg
+          - lsb-release
+          - ca-certificates
+          - curl
+        state: present
+
+    - name: Create directory for HashiCorp GPG key
+      ansible.builtin.file:
+        path: /usr/share/keyrings
+        state: directory
+        mode: "0755"
+
+    - name: Download HashiCorp GPG key
+      ansible.builtin.get_url:
+        url: https://apt.releases.hashicorp.com/gpg
+        dest: /tmp/hashicorp.asc
+        mode: "0644"
+
+    - name: Convert HashiCorp GPG key to keyring format
+      ansible.builtin.command:
+        cmd: gpg --dearmor --yes -o /usr/share/keyrings/hashicorp-archive-keyring.gpg /tmp/hashicorp.asc
+      args:
+        creates: /usr/share/keyrings/hashicorp-archive-keyring.gpg
+
+    - name: Add HashiCorp APT repository
+      ansible.builtin.apt_repository:
+        repo: "deb [arch=amd64 signed-by=/usr/share/keyrings/hashicorp-archive-keyring.gpg] https://apt.releases.hashicorp.com {{ ansible_distribution_release }} main"
+        filename: hashicorp
+        state: present
+
+    - name: Update apt cache after adding repository
+      ansible.builtin.apt:
+        update_cache: true
+
+    - name: Install HashiCorp Vault
+      ansible.builtin.apt:
+        name: vault
+        state: present
+
+    - name: Create Vault configuration directory
+      ansible.builtin.file:
+        path: "{{ vault_config_dir }}"
+        state: directory
+        owner: vault
+        group: vault
+        mode: "0750"
+
+    - name: Create Vault data directory
+      ansible.builtin.file:
+        path: "{{ vault_data_dir }}"
+        state: directory
+        owner: vault
+        group: vault
+        mode: "0750"
+
+    - name: Configure Vault server
+      ansible.builtin.copy:
+        dest: "{{ vault_config_dir }}/vault.hcl"
+        owner: vault
+        group: vault
+        mode: "0640"
+        content: |
+          ui = true
+
+          disable_mlock = true
+
+          storage "file" {
+            path = "{{ vault_data_dir }}"
+          }
+
+          listener "tcp" {
+            address = "0.0.0.0:{{ vault_port }}"
+            tls_disable = true
+          }
+
+          api_addr = "http://127.0.0.1:{{ vault_port }}"
+
+    - name: Enable and start Vault service
+      ansible.builtin.systemd:
+        name: vault
+        enabled: true
+        state: restarted
+        daemon_reload: true
+
+    - name: Wait for Vault port to become available
+      ansible.builtin.wait_for:
+        port: "{{ vault_port }}"
+        host: 127.0.0.1
+        delay: 3
+        timeout: 60
+
+    - name: Display Vault access information
+      ansible.builtin.debug:
+        msg:
+          - "Vault service has been configured."
+          - "Port: {{ vault_port }}"
+          - "Local address: http://127.0.0.1:{{ vault_port }}"
+          - "AWS EC2 access: http://YOUR_EC2_PUBLIC_IP:{{ vault_port }}"

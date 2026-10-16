@@ -1,37 +1,52 @@
 ---
-- name: Install and configure Nginx
-  hosts: nginx_hosts
+- name: Install and configure Nginx on Ubuntu EC2
+  hosts: local
+  connection: local
   become: true
+ 
   tasks:
+    - name: Update Ubuntu package cache
+      ansible.builtin.apt:
+        update_cache: true
+        cache_valid_time: 3600
+ 
     - name: Install Nginx
       ansible.builtin.apt:
         name: nginx
         state: present
-        update_cache: true
-        cache_valid_time: 3600
-    - name: Deploy practice landing page
-      ansible.builtin.template:
-        src: ../templates/nginx-index.html.j2
+ 
+    - name: Create a custom HTML webpage
+      ansible.builtin.copy:
         dest: /var/www/html/index.html
         owner: root
         group: root
         mode: "0644"
-      notify: Restart Nginx
-    - name: Enable and start Nginx
+        content: |
+          <!DOCTYPE html>
+          <html>
+          <head>
+            <title>Ansible Nginx Task</title>
+          </head>
+          <body>
+            <h1>Nginx Installed Successfully!</h1>
+            <p>Configured using an Ansible YAML playbook.</p>
+            <p>Nginx By shanmugam </p>
+          </body>
+          </html>
+ 
+    - name: Start and enable Nginx
       ansible.builtin.systemd:
         name: nginx
         state: started
         enabled: true
-    - name: Verify local HTTP response
+ 
+    - name: Verify Nginx responds with HTTP 200
       ansible.builtin.uri:
         url: http://127.0.0.1/
         status_code: 200
+        return_content: true
       register: nginx_response
-      retries: 5
-      delay: 2
-      until: nginx_response.status == 200
-  handlers:
-    - name: Restart Nginx
-      ansible.builtin.systemd:
-        name: nginx
-        state: restarted
+ 
+    - name: Display verification result
+      ansible.builtin.debug:
+        msg: "Nginx is working and serving the custom HTML page."

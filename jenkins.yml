@@ -1,10 +1,10 @@
 ---
-- name: Install Jenkins LTS on Ubuntu
-  hosts: jenkins_hosts
+- name: Install and configure Jenkins
+  hosts: managed
   become: true
-  gather_facts: true
+
   tasks:
-    - name: Install Java 21 and repository prerequisites
+    - name: Install Java and required packages
       ansible.builtin.apt:
         name:
           - fontconfig
@@ -12,43 +12,45 @@
           - curl
         state: present
         update_cache: true
-        cache_valid_time: 3600
+
+    - name: Create Jenkins keyring directory
+      ansible.builtin.file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: "0755"
+
     - name: Download Jenkins repository signing key
       ansible.builtin.get_url:
         url: https://pkg.jenkins.io/debian-stable/jenkins.io-2026.key
-        dest: /tmp/jenkins-keyring.asc
+        dest: /etc/apt/keyrings/jenkins-keyring.asc
         mode: "0644"
-    - name: Install Jenkins repository signing key in keyring
-      ansible.builtin.shell: |
-        set -o pipefail
-        rm -f /usr/share/keyrings/jenkins-keyring.gpg
-        curl -fsSL https://pkg.jenkins.io/debian-stable/jenkins.io-2026.key | gpg --dearmor -o /usr/share/keyrings/jenkins-keyring.gpg
-      args:
-        executable: /bin/bash
-      changed_when: true
-    - name: Add Jenkins LTS apt repository
+
+    - name: Add Jenkins repository
       ansible.builtin.apt_repository:
-        repo: "deb [signed-by=/usr/share/keyrings/jenkins-keyring.gpg] https://pkg.jenkins.io/debian-stable binary/"
+        repo: "deb [signed-by=/etc/apt/keyrings/jenkins-keyring.asc] https://pkg.jenkins.io/debian-stable binary/"
         filename: jenkins
         state: present
+
+    - name: Update apt cache
+      ansible.builtin.apt:
         update_cache: true
+
     - name: Install Jenkins
       ansible.builtin.apt:
         name: jenkins
         state: present
-        update_cache: true
+
     - name: Enable and start Jenkins
-      ansible.builtin.systemd:
+      ansible.builtin.service:
         name: jenkins
         state: started
         enabled: true
-    - name: Read initial administrator password if present
-      ansible.builtin.slurp:
-        src: /var/lib/jenkins/secrets/initialAdminPassword
-      register: jenkins_initial_password
-      failed_when: false
-    - name: Show Jenkins access details
+
+    - name: Check Jenkins service
+      ansible.builtin.command: systemctl is-active jenkins
+      register: jenkins_status
+      changed_when: false
+
+    - name: Display Jenkins status
       ansible.builtin.debug:
-        msg:
-          - "Open http://{{ ansible_host | default(inventory_hostname) }}:8080 from your trusted lab network."
-          - "{{ (jenkins_initial_password.content | default('') | b64decode) if jenkins_initial_password.content is defined else 'Initial password file not available yet; inspect Jenkins logs/status.' }}"
+        var: jenkins_status.stdout
